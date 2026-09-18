@@ -8,7 +8,7 @@ Shell tools for running the `JakobMelchard` platform. Private. Put this director
 | `org-repo ls` · `settings` · `sync` · `apps` | list repos · show settings drift vs `.github/infra/settings.json` · apply settings via `gh api` · show app installations |
 | `hooks-install [ref]` | vendor `.githooks` into the current repo (`.githooks/` + `core.hooksPath`) |
 | `agents-sync [skill…]` | copy org `AGENTS.md` + skills from `.agents` into `./.agents/` |
-| `config-sync [--examples]` | copy lint/format configs from `.config` per its manifest |
+| `config-sync [--examples] [group…]` | copy lint/format configs from `.config` per its manifest; groups limit to e.g. `eslint prettier` |
 | `dev-init <template>` | copy a `.devcontainer` template into the current repo |
 | `ci [repo…]` | latest CI conclusion per repo |
 
