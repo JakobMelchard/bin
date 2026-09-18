@@ -1,0 +1,8 @@
+# Our own reusable workflows are consumed at @main on purpose: fixes propagate
+# immediately and lint.yml in .github is the gate. Third-party actions must be hash-pinned.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "JakobMelchard/*": ref-pin
+        "*": hash-pin

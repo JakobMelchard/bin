@@ -18,4 +18,9 @@ for s in "$@"; do
   cp -R "$src/skills/$s" ".agents/skills/$s"
   say "  .agents/skills/$s"
 done
+# Claude Code reads .claude/skills and CLAUDE.md; everything else reads .agents/skills and AGENTS.md.
+# One source of truth, relative symlinks for the other convention.
+mkdir -p .claude
+if [ ! -e .claude/skills ] || [ -L .claude/skills ]; then ln -sfn ../.agents/skills .claude/skills; say "  .claude/skills -> ../.agents/skills"; fi
+if [ -f AGENTS.md ] && { [ ! -e CLAUDE.md ] || [ -L CLAUDE.md ]; }; then ln -sfn AGENTS.md CLAUDE.md; say "  CLAUDE.md -> AGENTS.md"; fi
 say "synced from $ORG/.agents. Reference .agents/AGENTS.org.md from the repo AGENTS.md."
