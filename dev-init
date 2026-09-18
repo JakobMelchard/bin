@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# dev-init <template> — copy a devcontainer template from JakobMelchard/.devcontainer into this repo.
+# Templates: hx-app go py c-cpp infra cf
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+t=${1:?usage: dev-init <template>}
+cd "$(root)"
+src=$(fetch .devcontainer)
+[ -d "$src/templates/$t/.devcontainer" ] || die "no template '$t' (have: $(cd "$src/templates" && ls | tr '\n' ' '))"
+[ -e .devcontainer ] && die ".devcontainer exists — remove it first"
+cp -R "$src/templates/$t/.devcontainer" .devcontainer
+say "  .devcontainer/ <- $t"

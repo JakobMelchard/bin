@@ -1,0 +1,10 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  shell:
+    uses: JakobMelchard/.github/.github/workflows/shell.yml@main
+    with:
+      paths: .
+      severity: warning

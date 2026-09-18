@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# agents-sync [skill…] — copy org AGENTS.md and skills from JakobMelchard/.agents into ./.agents/.
+# No args: every skill. Copies, not symlinks: sandboxed agents do not follow links out of the repo.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+cd "$(root)"
+src=$(fetch .agents)
+mkdir -p .agents/skills
+cp "$src/AGENTS.md" .agents/AGENTS.org.md
+say "  .agents/AGENTS.org.md"
+if [ $# -eq 0 ]; then
+  set --
+  while IFS= read -r __n; do set -- "$@" "$__n"; done < <(cd "$src/skills" && ls)
+fi
+for s in "$@"; do
+  [ -d "$src/skills/$s" ] || die "no such org skill: $s"
+  rm -rf ".agents/skills/$s"
+  cp -R "$src/skills/$s" ".agents/skills/$s"
+  say "  .agents/skills/$s"
+done
+say "synced from $ORG/.agents. Reference .agents/AGENTS.org.md from the repo AGENTS.md."

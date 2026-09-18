@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# config-sync [--examples] — copy org lint/format configs from JakobMelchard/.config into this repo
+# per its manifest.json. --examples also seeds the per-repo files (release-please, renovate) if absent.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+need jq
+cd "$(root)"
+src=$(fetch .config)
+m="$src/manifest.json"
+say "config-sync -> $(pwd)"
+jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' "$m" | while IFS=$'\t' read -r from to; do
+  vendor "$src/$from" "$to" ".config/$from"
+done
+if [ "${1:-}" = "--examples" ]; then
+  jq -r '.examples | to_entries[] | "\(.key)\t\(.value)"' "$m" | while IFS=$'\t' read -r from to; do
+    if [ -e "$to" ]; then say "  keep $to (exists)"; else cp "$src/$from" "$to"; say "  seed $to"; fi
+  done
+fi

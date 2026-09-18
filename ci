@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# ci [repo…] — latest CI conclusion per org repo on its default branch. No args: every repo.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+need gh jq
+if [ $# -eq 0 ]; then
+  set --
+  while IFS= read -r __n; do set -- "$@" "$__n"; done < <(gh repo list "$ORG" --limit 200 --json name,isArchived -q '.[] | select(.isArchived|not) | .name' | sort)
+fi
+printf '%-26s %-10s %-18s %s\n' REPO STATUS WORKFLOW WHEN
+for r in "$@"; do
+  gh run list -R "$ORG/$r" --limit 1 --json name,conclusion,status,createdAt,headBranch \
+    -q '.[] | "\(.conclusion // .status)\t\(.name)\t\(.createdAt[:16])\t\(.headBranch)"' 2>/dev/null \
+    | { IFS=$'\t' read -r c n w b || { printf '%-26s %s\n' "$r" "-"; exit 0; }; printf '%-26s %-10s %-18s %s  %s\n' "$r" "$c" "$n" "$w" "$b"; }
+done

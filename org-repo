@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# org-repo — create and align JakobMelchard repos.
+#
+#   org-repo new <name> --template <hx-app|go|py|c-cpp|infra|cf> [--public] [-d "description"]
+#   org-repo ls                      names, visibility, archived, default branch
+#   org-repo settings [repo…]        drift of live settings vs .github/infra/settings.json
+#   org-repo sync [repo…]            apply repo_defaults (+ per-repo overrides) via gh api
+#   org-repo apps                    app installations and the repos each one can see
+#
+# Source of truth: .github/infra/settings.json. `tofu` in .github/infra applies the same
+# document declaratively; `sync` is the imperative path when no admin:org token is around.
+set -euo pipefail
+. "$(dirname "$0")/lib/common.sh"
+need gh jq git
+
+# keys of repo_defaults that PATCH /repos accepts
+PATCH_KEYS='has_issues has_wiki has_projects allow_merge_commit allow_squash_merge allow_rebase_merge delete_branch_on_merge allow_auto_merge allow_update_branch squash_merge_commit_title squash_merge_commit_message web_commit_signoff_required'
+
+desired() { # desired <repo> -> json of the settings that should hold for <repo>
+  settings_json | jq --arg r "$1" '.repo_defaults + (.repos[$r] // {}) | with_entries(select(.key != "description" and .key != "topics"))'
+}
+
+cmd_ls() {
+  gh repo list "$ORG" --limit 200 --json name,visibility,isArchived,defaultBranchRef \
+    -q '.[] | "\(.name)\t\(.visibility|ascii_downcase)\t\(if .isArchived then "archived" else "" end)\t\(.defaultBranchRef.name)"' | sort | column -t
+}
+
+cmd_settings() {
+  if [ $# -eq 0 ]; then
+    set --
+    while IFS= read -r __n; do set -- "$@" "$__n"; done < <(gh repo list "$ORG" --limit 200 --json name -q '.[].name' | sort)
+  fi
+  rc=0
+  for r in "$@"; do
+    want=$(desired "$r"); live=$(gh api "repos/$ORG/$r")
+    diff=$(jq -n --argjson w "$want" --argjson l "$live" '
+      [ $w | to_entries[] | select(.key as $k | ($l[$k] // null) != .value) | "\(.key): live=\($l[.key]) want=\(.value)" ] | .[]' -r)
+    if [ -n "$diff" ]; then rc=1; say "$r"; say "$diff" | sed 's/^/    /'; fi
+  done
+  [ $rc -eq 0 ] && say "no drift"
+  return $rc
+}
+
+cmd_sync() {
+  if [ $# -eq 0 ]; then
+    set --
+    while IFS= read -r __n; do set -- "$@" "$__n"; done < <(gh repo list "$ORG" --limit 200 --json name,isArchived -q '.[] | select(.isArchived|not) | .name' | sort)
+  fi
+  for r in "$@"; do
+    body=$(desired "$r" | jq --arg keys "$PATCH_KEYS visibility archived" 'with_entries(select(.key as $k | ($keys | split(" ")) | index($k)))')
+    say "$r: $(printf '%s' "$body" | jq -c .)"
+    gh api -X PATCH "repos/$ORG/$r" --input - <<<"$body" >/dev/null
+    # dependabot alerts are a separate endpoint
+    if [ "$(desired "$r" | jq -r '.vulnerability_alerts // empty')" = "true" ]; then
+      gh api -X PUT "repos/$ORG/$r/vulnerability-alerts" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+cmd_apps() {
+  gh api "orgs/$ORG/installations" -q '.installations[] | "\(.id)\t\(.app_slug)\t\(.repository_selection)"' | while IFS=$'\t' read -r id slug sel; do
+    if [ "$sel" = "all" ]; then say "$slug: all"; continue; fi
+    repos=$(gh api "user/installations/$id/repositories" -q '.repositories[].name' 2>/dev/null | tr '\n' ' ')
+    say "$slug: ${repos:-?}"
+  done
+}
+
+cmd_new() {
+  local name="" tpl="" vis=--private desc=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --template) tpl=$2; shift 2 ;;
+      --public)   vis=--public; shift ;;
+      -d)         desc=$2; shift 2 ;;
+      -*)         die "unknown flag $1" ;;
+      *)          name=$1; shift ;;
+    esac
+  done
+  [ -n "$name" ] && [ -n "$tpl" ] || die "usage: org-repo new <name> --template <t> [--public] [-d desc]"
+  local dir="$WS/$name"
+  [ -e "$dir" ] && die "$dir exists"
+  mkdir -p "$dir"; cd "$dir"; git init -q -b main
+  gh repo create "$ORG/$name" $vis ${desc:+-d "$desc"} --source=. --remote=origin >/dev/null
+  say "created $ORG/$name ($vis)"
+
+  "$(dirname "$0")/dev-init" "$tpl"
+  "$(dirname "$0")/config-sync" --examples
+  "$(dirname "$0")/agents-sync" conventional-commits pr verifiable-goals
+  printf '# %s\n\n%s\n' "$name" "${desc:-TODO}" > README.md
+  printf 'node_modules/\n.venv/\n.DS_Store\n' > .gitignore
+
+  mkdir -p .github/workflows
+  case "$tpl" in
+    hx-app|cf) cat > .github/workflows/ci.yml <<Y
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+jobs:
+  ci:
+    uses: $ORG/.github/.github/workflows/node.yml@main
+    with:
+      install-cmd: npm install
+      check-cmd: npx tsc
+      test-cmd: npm test
+Y
+    ;;
+    go) cat > .github/workflows/ci.yml <<Y
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+jobs:
+  ci:
+    uses: $ORG/.github/.github/workflows/go.yml@main
+Y
+    ;;
+    py) cat > .github/workflows/ci.yml <<Y
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+jobs:
+  ci:
+    uses: $ORG/.github/.github/workflows/python.yml@main
+Y
+    ;;
+    infra) cat > .github/workflows/ci.yml <<Y
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+jobs:
+  ci:
+    uses: $ORG/.github/.github/workflows/terraform.yml@main
+Y
+    ;;
+    c-cpp) cat > .github/workflows/ci.yml <<Y
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+jobs:
+  ci:
+    uses: $ORG/.github/.github/workflows/shell.yml@main
+Y
+    ;;
+  esac
+
+  git add -A && git commit -q -m "chore: scaffold from $tpl template"
+  "$(dirname "$0")/hooks-install"
+  git add -A && git commit -q -m "chore: vendor org hooks"
+  git push -q -u origin main
+  cmd_sync "$name"
+  say
+  say "next: add \"$name\" to .github/infra/settings.json repos (or leave it on repo_defaults) and open the first PR."
+}
+
+case "${1:-}" in
+  new)      shift; cmd_new "$@" ;;
+  ls)       cmd_ls ;;
+  settings) shift; cmd_settings "$@" ;;
+  sync)     shift; cmd_sync "$@" ;;
+  apps)     cmd_apps ;;
+  *)        sed -n '2,13p' "$0" >&2; exit 2 ;;
+esac
