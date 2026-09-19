@@ -3,6 +3,7 @@
 ORG="${ORG:-JakobMelchard}"
 # absolute path of this bin dir, resolved before any tool cd's away — a relative
 # $(dirname "$0") stops working after `cd` (org-repo new bit this)
+# shellcheck disable=SC2034 # used by every tool that sources this
 BIN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WS="${WORKSPACES_ROOT:-$HOME/Workspaces}/$ORG"
 
