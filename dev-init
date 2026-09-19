@@ -2,7 +2,7 @@
 # dev-init <template> — copy a devcontainer template from JakobMelchard/.devcontainer into this repo.
 # Templates: hx-app go py c-cpp infra cf
 set -euo pipefail
-. "$(dirname "$0")/lib/common.sh"
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 t=${1:?usage: dev-init <template>}
 cd "$(root)"
 src=$(fetch .devcontainer)

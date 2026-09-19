@@ -10,7 +10,7 @@
 # Source of truth: .github/infra/settings.json. `tofu` in .github/infra applies the same
 # document declaratively; `sync` is the imperative path when no admin:org token is around.
 set -euo pipefail
-. "$(dirname "$0")/lib/common.sh"
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need gh jq git
 
 # keys of repo_defaults that PATCH /repos accepts
@@ -83,9 +83,9 @@ cmd_new() {
   gh repo create "$ORG/$name" $vis ${desc:+-d "$desc"} --source=. --remote=origin >/dev/null
   say "created $ORG/$name ($vis)"
 
-  "$(dirname "$0")/dev-init" "$tpl"
-  "$(dirname "$0")/config-sync" --examples
-  "$(dirname "$0")/agents-sync" conventional-commits pr verifiable-goals
+  "$BIN/dev-init" "$tpl"
+  "$BIN/config-sync" --examples
+  "$BIN/agents-sync" conventional-commits pr verifiable-goals
   printf '# %s\n\n%s\n' "$name" "${desc:-TODO}" > README.md
   printf 'node_modules/\n.venv/\n.DS_Store\n' > .gitignore
 
@@ -138,7 +138,7 @@ Y
   esac
 
   git add -A && git commit -q -m "chore: scaffold from $tpl template"
-  "$(dirname "$0")/hooks-install"
+  "$BIN/hooks-install"
   git add -A && git commit -q -m "chore: vendor org hooks"
   git push -q -u origin main
   cmd_sync "$name"

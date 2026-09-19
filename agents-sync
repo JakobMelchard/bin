@@ -2,7 +2,7 @@
 # agents-sync [skill…] — copy org AGENTS.md and skills from JakobMelchard/.agents into ./.agents/.
 # No args: every skill. Copies, not symlinks: sandboxed agents do not follow links out of the repo.
 set -euo pipefail
-. "$(dirname "$0")/lib/common.sh"
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 cd "$(root)"
 src=$(fetch .agents)
 mkdir -p .agents/skills

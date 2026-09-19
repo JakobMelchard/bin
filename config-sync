@@ -3,7 +3,7 @@
 # this repo per its manifest.json. Groups are the top-level dirs there (eslint prettier tsconfig ruff
 # gitleaks editorconfig); no group = all. --examples also seeds release-please/renovate if absent.
 set -euo pipefail
-. "$(dirname "$0")/lib/common.sh"
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need jq
 cd "$(root)"
 src=$(fetch .config)

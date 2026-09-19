@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ci [repo…] — latest CI conclusion per org repo on its default branch. No args: every repo.
 set -euo pipefail
-. "$(dirname "$0")/lib/common.sh"
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need gh jq
 if [ $# -eq 0 ]; then
   set --
