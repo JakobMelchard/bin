@@ -77,8 +77,13 @@ cmd_labels() { # the script lives next to settings.json so labels.yml in .github
 cmd_apps() {
   gh api "orgs/$ORG/installations" -q '.installations[] | "\(.id)\t\(.app_slug)\t\(.repository_selection)"' | while IFS=$'\t' read -r id slug sel; do
     if [ "$sel" = "all" ]; then say "$slug: all"; continue; fi
-    repos=$(gh api "user/installations/$id/repositories" -q '.repositories[].name' 2>/dev/null | tr '\n' ' ')
-    say "$slug: ${repos:-?}"
+    # user/installations/<id>/repositories needs a PAT or an app token; gh's OAuth token gets a
+    # 403 whose body lands on stdout. Under pipefail that failure used to end the whole loop.
+    if out=$(gh api "user/installations/$id/repositories" -q '.repositories[].name' 2>/dev/null); then
+      say "$slug: $(printf '%s' "$out" | tr '\n' ' ')"
+    else
+      say "$slug: selected repos (list needs a PAT)"
+    fi
   done
 }
 
