@@ -5,12 +5,13 @@ Shell tools for running the `JakobMelchard` platform. Private. Put this director
 | Tool | Does |
 |------|------|
 | `org-repo new <name> --template <t>` | create a private repo, apply a devcontainer template, vendor configs/hooks/skills, write the CI caller, push, apply settings |
-| `org-repo ls` · `settings` · `sync` · `apps` | list repos · show settings drift vs `.github/infra/settings.json` · apply settings via `gh api` · show app installations |
+| `org-repo ls` · `settings` · `sync` · `apps` · `labels` | list repos · show settings drift vs `.github/infra/settings.json` · apply settings via `gh api` · show app installations · apply the declared labels to every repo |
 | `hooks-install [ref]` | vendor `.githooks` into the current repo (`.githooks/` + `core.hooksPath`) |
 | `agents-sync [skill…]` | copy org `AGENTS.md` + skills from `.agents` into `./.agents/`; links `.claude/skills` and `CLAUDE.md` so Claude Code sees the same set |
 | `config-sync [--examples] [group…]` | copy lint/format configs from `.config` per its manifest; groups limit to e.g. `eslint prettier` |
 | `dev-init <template>` | copy a `.devcontainer` template into the current repo |
 | `ci [repo…]` | latest CI conclusion per repo |
+| `fleet-sync [--dry-run] [repo…]` | refresh vendored configs and hooks in every repo that carries them, one PR per changed repo; `.github/workflows/fleet-sync.yml` runs it weekly with the org app |
 
 Each tool reads its source repo from the local workspace clone (`~/Workspaces/JakobMelchard/<repo>`) when present, else via `gh api` tarball — private repos, no raw URLs. `FETCH_REMOTE=1` forces the tarball.
 

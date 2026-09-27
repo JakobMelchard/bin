@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# fleet-sync [--dry-run] [repo…] — refresh the vendored org files in every repo and open one PR
+# per repo that changed. Refreshes only what a repo already carries: the config-sync groups whose
+# copy exists and .githooks/ when hooks are vendored. Nothing is added to a repo that lacks it.
+# No args: every non-archived repo in .github/infra/settings.json except the platform repos.
+# --dry-run prints the diff and pushes nothing.
+#
+# Runs locally with your gh auth (clones over the SSH alias, FLEET_GIT_HOST, default
+# github-lilfeelz) or from .github/workflows/fleet-sync.yml with an app token (clones over https).
+set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
+need gh git jq
+
+BRANCH=chore/fleet-sync
+TITLE="chore: refresh vendored org config and hooks"
+PLATFORM=" .github .config .githooks .agents .devcontainer bin template "
+dry=0; repos=""
+for a in "$@"; do case "$a" in --dry-run) dry=1 ;; -*) die "unknown flag $a" ;; *) repos="$repos $a" ;; esac; done
+if [ -z "$repos" ]; then
+  while IFS= read -r n; do
+    case "$PLATFORM" in *" $n "*) ;; *) repos="$repos $n" ;; esac
+  done < <(settings_json | jq -r '.repos | to_entries[] | select(.value.archived != true) | .key')
+fi
+
+manifest="$(fetch .config)/manifest.json"
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+clone_url() { # https with the token in CI, the SSH alias locally (bare github.com picks the wrong key)
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then printf 'https://x-access-token:%s@github.com/%s/%s.git\n' "${GH_TOKEN:?GH_TOKEN}" "$ORG" "$1"
+  else printf 'git@%s:%s/%s.git\n' "${FLEET_GIT_HOST:-github-lilfeelz}" "$ORG" "$1"; fi
+}
+
+for r in $repos; do
+  d="$tmp/$r"
+  if ! git clone -q --depth 1 "$(clone_url "$r")" "$d" 2>/dev/null; then say "$r: clone failed, skipped"; continue; fi
+  (
+    cd "$d"
+    groups=""
+    while IFS=$'\t' read -r from to; do
+      [ -e "$to" ] && groups="$groups ${from%%/*}"
+    done < <(jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
+    # shellcheck disable=SC2086 # space-separated groups by construction
+    [ -n "$groups" ] && "$BIN/config-sync" $groups >/dev/null
+    [ -d .githooks ] && "$BIN/hooks-install" >/dev/null
+    if [ -z "$(git status --porcelain)" ]; then say "$r: up to date"; exit 0; fi
+    say "$r: changed"
+    git status --short | sed 's/^/    /'
+    [ "$dry" = 1 ] && exit 0
+    git checkout -q -B "$BRANCH"
+    git add -A
+    git -c user.name=fleet-sync -c user.email=fleet-sync@users.noreply.github.com commit -q -m "$TITLE"
+    git push -q -f origin "$BRANCH"
+    if [ -z "$(gh pr list -R "$ORG/$r" --head "$BRANCH" --json number -q '.[].number')" ]; then
+      gh pr create -R "$ORG/$r" --head "$BRANCH" --title "$TITLE" --label fleet/deps \
+        --body "Vendored copies refreshed from \`.config\` and \`.githooks\` by \`fleet-sync\`. Review the diff; the copies are not edited in place." >/dev/null
+      say "    opened PR"
+    else
+      say "    updated existing PR"
+    fi
+  ) || true
+done
