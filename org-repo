@@ -107,7 +107,6 @@ cmd_new() {
 
   "$BIN/dev-init" "$tpl"
   "$BIN/config-sync" --examples
-  "$BIN/agents-sync" conventional-commits pr verifiable-goals
   printf '# %s\n\n%s\n' "$name" "${desc:-TODO}" > README.md
   printf 'node_modules/\n.venv/\n.DS_Store\n' > .gitignore
 
