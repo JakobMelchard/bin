@@ -15,16 +15,23 @@ need() { for c in "$@"; do have "$c" || die "needs $c"; done; }
 root() { git rev-parse --show-toplevel 2>/dev/null || die "not in a git repo"; }
 
 # fetch <repo> [ref]  -> prints a temp dir holding a checkout of $ORG/<repo>
-# Uses the local workspace clone when present, else a gh tarball (private-safe).
+# No ref: the local workspace clone when it is clean and at origin/main, else a gh tarball of main.
+# Explicit ref: always the gh tarball (private-safe), so the ref is what gets vendored.
 fetch() {
-  local repo=$1 ref=${2:-main} d
-  if [ -z "${FETCH_REMOTE:-}" ] && [ -d "$WS/$repo/.git" ]; then
-    printf '%s\n' "$WS/$repo"; return
+  local repo=$1 ref=${2:-} c="$WS/$1" d
+  if [ -z "${FETCH_REMOTE:-}" ] && [ -z "$ref" ] && [ -d "$c/.git" ]; then
+    if [ -z "$(git -C "$c" status --porcelain)" ] &&
+       [ "$(git -C "$c" rev-parse HEAD)" = "$(git -C "$c" rev-parse -q --verify origin/main)" ]; then
+      printf '%s\n' "$c"; return
+    fi
+    echo "${0##*/}: warning: $c is dirty or not at origin/main; using $ORG/$repo@main from GitHub" >&2
   fi
+  ref=${ref:-main}
   need gh
   d=$(mktemp -d)
-  gh api "repos/$ORG/$repo/tarball/$ref" > "$d/t.tgz"
-  tar -xzf "$d/t.tgz" -C "$d" --strip-components=1
+  # command substitution drops set -e in bash 3.2, so check each step
+  gh api "repos/$ORG/$repo/tarball/$ref" > "$d/t.tgz" || die "cannot fetch $ORG/$repo@$ref"
+  tar -xzf "$d/t.tgz" -C "$d" --strip-components=1 || die "cannot unpack $ORG/$repo@$ref"
   rm -f "$d/t.tgz"
   printf '%s\n' "$d"
 }
@@ -34,9 +41,9 @@ vendor() {
   local src=$1 dst=$2 label=$3
   mkdir -p "$(dirname "$dst")"
   case "$dst" in
-    *.js)   { echo "// VENDORED from $ORG/$label — do not edit here; run config-sync."; cat "$src"; } > "$dst" ;;
+    *.js)   { echo "// VENDORED from $ORG/$label - do not edit here; run config-sync."; cat "$src"; } > "$dst" ;;
     *.toml|*.yml|*.yaml|*editorconfig)
-            { echo "# VENDORED from $ORG/$label — do not edit here; run config-sync."; cat "$src"; } > "$dst" ;;
+            { echo "# VENDORED from $ORG/$label - do not edit here; run config-sync."; cat "$src"; } > "$dst" ;;
     *)      cp "$src" "$dst" ;;   # json/markdown: no comment syntax, copied verbatim
   esac
   say "  $dst"
