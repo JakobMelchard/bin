@@ -33,8 +33,12 @@ cmd_settings() {
   rc=0
   for r in "$@"; do
     want=$(desired "$r"); live=$(gh api "repos/$ORG/$r")
+    # vulnerability_alerts is not a /repos attribute: 204 = on, 404 = off
+    if gh api "repos/$ORG/$r/vulnerability-alerts" >/dev/null 2>&1; then va=true; else va=false; fi
+    live=$(printf '%s' "$live" | jq --argjson va "$va" '. + {vulnerability_alerts: $va}')
+    # `has`, not `//`: a live value of false must compare as false, not null
     diff=$(jq -n --argjson w "$want" --argjson l "$live" '
-      [ $w | to_entries[] | select(.key as $k | ($l[$k] // null) != .value) | "\(.key): live=\($l[.key]) want=\(.value)" ] | .[]' -r)
+      [ $w | to_entries[] | select(.key as $k | (if $l | has($k) then $l[$k] else null end) != .value) | "\(.key): live=\($l[.key]) want=\(.value)" ] | .[]' -r)
     if [ -n "$diff" ]; then rc=1; say "$r"; say "$diff" | sed 's/^/    /'; fi
   done
   [ $rc -eq 0 ] && say "no drift"
