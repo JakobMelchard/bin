@@ -4,7 +4,7 @@
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 t=${1:?usage: dev-init <template>}
-cd "$(root)"
+r=$(root) || exit 1; cd "$r"
 src=$(fetch .devcontainer)
 [ -d "$src/templates/$t/.devcontainer" ] || die "no template '$t' (have: $(cd "$src/templates" && ls | tr '\n' ' '))"
 [ -e .devcontainer ] && die ".devcontainer exists — remove it first"
