@@ -147,9 +147,8 @@ xcb() { # xcodebuild with the common flags; $1 = action
   if [ "$target" = device ]; then
     extra=(-allowProvisioningUpdates -allowProvisioningDeviceRegistration)
     [ -n "${DEVELOPMENT_TEAM:-}" ] && extra[${#extra[@]}]="DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
-  else
-    extra=(CODE_SIGNING_ALLOWED=NO)
   fi
+  # Simulator builds keep Xcode's ad-hoc signing: without entitlements the Keychain fails (-34018).
   set -o pipefail
   xcodebuild "$(project_flag "$p")" "$p" -scheme "$s" -configuration "$IOS_CONFIG" \
     -destination "$(destination)" -derivedDataPath build/DerivedData \
