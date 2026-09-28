@@ -108,7 +108,7 @@ bundle_id() { # of an .app
 
 bundle_id_setting() { # <project> <scheme> -> PRODUCT_BUNDLE_IDENTIFIER from the build settings
   xcodebuild "$(project_flag "$1")" "$1" -scheme "$2" -showBuildSettings 2>/dev/null \
-    | awk -F' = ' '/PRODUCT_BUNDLE_IDENTIFIER/ {print $2; exit}'
+    | awk -F' = ' '$1 ~ /^ *PRODUCT_BUNDLE_IDENTIFIER$/ {print $2; exit}'
 }
 
 # newest installed profile whose app id matches <bundle-id> (or a wildcard), as its UUID
