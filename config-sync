@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# config-sync [--examples] [group…] — copy org lint/format configs from JakobMelchard/.config into
-# this repo per its manifest.json. Groups are the top-level dirs there (eslint prettier tsconfig ruff
-# gitleaks editorconfig); no group = all. --examples also seeds release-please/renovate if absent.
+# config-sync [--examples] [group…] — copy org configs from JakobMelchard/.config into this repo per
+# its manifest.json. Groups are the copied top-level dirs there (ruff gitleaks editorconfig); no group
+# = all. eslint/prettier/tsconfig are not copied: JS repos install the package @jakobmelchard/config.
+# --examples also seeds release-please/renovate if absent.
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need jq
