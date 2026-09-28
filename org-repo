@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # org-repo — create and align JakobMelchard repos.
 #
-#   org-repo new <name> --template <hx-app|go|py|c-cpp|infra|cf> [--public] [-d "description"]
-#                                    scaffold, prek hooks pinned to JakobMelchard/.githooks, CI caller
+#   org-repo new <name> --template <hx-app|cf|go|py|c-cpp|infra|ios|macos> [--public] [-d "description"] [--ref <ref>]
+#                                    render JakobMelchard/template with copier (every file: CI caller,
+#                                    prek config, devcontainer, configs, scaffold), create, push, settings
 #   org-repo ls                      names, visibility, archived, default branch
 #   org-repo settings [repo…]        drift of live settings vs .github/infra/settings.json
 #   org-repo sync [repo…]            apply repo_defaults (+ per-repo overrides) via gh api
@@ -14,6 +15,9 @@
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need gh jq git
+
+# copier template for `new`; --ref picks a tag or branch (default: its latest tag)
+TEMPLATE_SRC="${ORG_TEMPLATE_SRC:-https://github.com/$ORG/template.git}"
 
 # keys of repo_defaults that PATCH /repos accepts
 PATCH_KEYS='has_issues has_wiki has_projects allow_merge_commit allow_squash_merge allow_rebase_merge delete_branch_on_merge allow_auto_merge allow_update_branch squash_merge_commit_title squash_merge_commit_message web_commit_signoff_required is_template'
@@ -88,131 +92,41 @@ cmd_apps() {
   done
 }
 
-prek_config() { # prek_config <template> — .pre-commit-config.yaml pinning the org hooks for a template
-  local own="conventional-commit" extra=""
-  case "$1" in
-    hx-app|cf) own="$own eslint" ;;
-    go)        own="$own gofmt go-build" ;;
-    py)        extra="  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.9
-    hooks:
-      - id: ruff-check
-" ;;
-    infra|c-cpp)
-      [ "$1" = infra ] && own="$own tofu-fmt"
-      own="$own shell-syntax"
-      extra="  - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.11.0.1
-    hooks:
-      - id: shellcheck
-        args: [--severity=warning]
-        exclude_types: [zsh]
-" ;;
-  esac
-  cat <<Y
-# Hooks come from pinned repos; Renovate bumps the revs. CI runs the same config through
-# $ORG/.github hooks.yml. Setup: brew install prek && prek install
-default_install_hook_types: [pre-commit, commit-msg, pre-push]
-default_stages: [pre-commit]
-repos:
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.1
-    hooks:
-      - id: gitleaks
-${extra}  - repo: https://github.com/$ORG/.githooks
-    rev: v1.0.0
-    hooks:
-Y
-  for h in $own; do printf '      - id: %s\n' "$h"; done
-}
-
 cmd_new() {
-  local name="" tpl="" vis=--private desc=""
+  local name="" tpl="" vis=--private desc="" ref=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --template) tpl=$2; shift 2 ;;
+      --ref)      ref=$2; shift 2 ;;
       --public)   vis=--public; shift ;;
       -d)         desc=$2; shift 2 ;;
       -*)         die "unknown flag $1" ;;
       *)          name=$1; shift ;;
     esac
   done
-  [ -n "$name" ] && [ -n "$tpl" ] || die "usage: org-repo new <name> --template <t> [--public] [-d desc]"
+  [ -n "$name" ] && [ -n "$tpl" ] || die "usage: org-repo new <name> --template <t> [--public] [-d desc] [--ref <template ref>]"
+  need uvx
   local dir="$WS/$name"
   [ -e "$dir" ] && die "$dir exists"
-  mkdir -p "$dir"; cd "$dir"; git init -q -b main
+
+  # Render first: a bad template name or answer fails here, before anything exists on GitHub.
+  # No --trust: the template uses no unsafe copier features (see its README).
+  uvx copier copy --quiet --defaults \
+    --data template="$tpl" --data name="$name" --data description="${desc:-TODO}" \
+    ${ref:+--vcs-ref "$ref"} "$TEMPLATE_SRC" "$dir" || die "copier copy failed; nothing was created on GitHub"
+  say "rendered $TEMPLATE_SRC ($tpl) -> $dir"
+  cd "$dir"
+  git init -q -b main
+  git add -A && git commit -q -m "chore: scaffold from $ORG/template ($tpl)"
+
   gh repo create "$ORG/$name" $vis ${desc:+-d "$desc"} --source=. --remote=origin >/dev/null
   say "created $ORG/$name ($vis)"
-
-  "$BIN/dev-init" "$tpl"
-  "$BIN/config-sync" --examples
-  printf '# %s\n\n%s\n' "$name" "${desc:-TODO}" > README.md
-  printf 'node_modules/\n.venv/\n.DS_Store\n' > .gitignore
-
-  mkdir -p .github/workflows
-  case "$tpl" in
-    hx-app|cf) cat > .github/workflows/ci.yml <<Y
-name: ci
-on: { push: { branches: [main] }, pull_request: {} }
-jobs:
-  ci:
-    uses: $ORG/.github/.github/workflows/node.yml@main
-    with:
-      install-cmd: npm install
-      check-cmd: npx tsc
-      test-cmd: npm test
-Y
-    ;;
-    go) cat > .github/workflows/ci.yml <<Y
-name: ci
-on: { push: { branches: [main] }, pull_request: {} }
-jobs:
-  ci:
-    uses: $ORG/.github/.github/workflows/go.yml@main
-Y
-    ;;
-    py) cat > .github/workflows/ci.yml <<Y
-name: ci
-on: { push: { branches: [main] }, pull_request: {} }
-jobs:
-  ci:
-    uses: $ORG/.github/.github/workflows/python.yml@main
-Y
-    ;;
-    infra) cat > .github/workflows/ci.yml <<Y
-name: ci
-on: { push: { branches: [main] }, pull_request: {} }
-jobs:
-  ci:
-    uses: $ORG/.github/.github/workflows/terraform.yml@main
-Y
-    ;;
-    c-cpp) cat > .github/workflows/ci.yml <<Y
-name: ci
-on: { push: { branches: [main] }, pull_request: {} }
-jobs:
-  ci:
-    uses: $ORG/.github/.github/workflows/shell.yml@main
-Y
-    ;;
-  esac
-
-  prek_config "$tpl" > .pre-commit-config.yaml
-  # the hooks job needs no node_modules; eslint runs in node.yml
-  case "$tpl" in hx-app|cf) hooks_with="
-    with:
-      skip: eslint" ;; *) hooks_with="" ;; esac
-  cat >> .github/workflows/ci.yml <<Y
-  hooks:
-    uses: $ORG/.github/.github/workflows/hooks.yml@main$hooks_with
-Y
-
-  git add -A && git commit -q -m "chore: scaffold from $tpl template"
   if command -v prek >/dev/null; then prek install >/dev/null; else say "note: prek not installed, hooks skipped (brew install prek && prek install)"; fi
   git push -q -u origin main
   cmd_sync "$name"
   say
   say "next: add \"$name\" to .github/infra/settings.json repos (or leave it on repo_defaults) and open the first PR."
+  say "template updates: uvx copier update --defaults (Renovate opens them as PRs from .copier-answers.yml)."
 }
 
 case "${1:-}" in
@@ -222,5 +136,5 @@ case "${1:-}" in
   sync)     shift; cmd_sync "$@" ;;
   apps)     cmd_apps ;;
   labels)   shift; cmd_labels "$@" ;;
-  *)        sed -n '2,14p' "$0" >&2; exit 2 ;;
+  *)        sed -n '2,15p' "$0" >&2; exit 2 ;;
 esac

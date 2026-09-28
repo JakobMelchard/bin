@@ -3,6 +3,8 @@
 # per repo that changed. Refreshes only what a repo already carries: the config-sync groups whose
 # copy exists. Nothing is added to a repo that lacks it. Hooks are not vendored any more: repos pin
 # JakobMelchard/.githooks in .pre-commit-config.yaml and Renovate bumps it.
+# Repos rendered from JakobMelchard/template (they carry .copier-answers.yml) are skipped: their
+# vendored configs come with the template, via `uvx copier update` or Renovate's copier PRs.
 # No args: every non-archived repo in .github/infra/settings.json except the platform repos.
 # --dry-run prints the diff and pushes nothing.
 #
@@ -36,6 +38,7 @@ for r in $repos; do
   if ! git clone -q --depth 1 "$(clone_url "$r")" "$d" 2>/dev/null; then say "$r: clone failed, skipped"; continue; fi
   (
     cd "$d"
+    if [ -f .copier-answers.yml ]; then say "$r: templated, skipped (copier update / Renovate)"; exit 0; fi
     groups=""
     while IFS=$'\t' read -r from to; do
       [ -e "$to" ] && groups="$groups ${from%%/*}"
