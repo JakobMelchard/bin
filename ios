@@ -54,8 +54,17 @@ sim_udid() { # booted simulator named $IOS_SIM, else any with that name
     [.devices[][] | select(.name == $n and .isAvailable)] | sort_by(.state != "Booted") | .[0].udid // empty'
 }
 
-# devicectl prints prose on stdout next to its JSON, so JSON goes through a temp file
-dctl() { local f; f=$(mktemp); xcrun devicectl "$@" --json-output "$f" >/dev/null 2>&1 || true; cat "$f"; rm -f "$f"; }
+# devicectl prints prose on stdout next to its JSON, so JSON goes through a temp file.
+# A failed command still writes JSON with an .error; surface its reason and fail.
+dctl() {
+  local f; f=$(mktemp)
+  xcrun devicectl "$@" --json-output "$f" >/dev/null 2>&1 || true
+  if jq -e '.error' "$f" >/dev/null 2>&1; then
+    jq -r '[.. | objects | (.NSLocalizedFailureReason? // .NSLocalizedDescription?) | .string? // empty] | unique | join(" — ")' "$f" >&2
+    rm -f "$f"; return 1
+  fi
+  cat "$f"; rm -f "$f"
+}
 
 device_id() { # devicectl identifier of $IOS_DEVICE (id or name) or the first connected device
   dctl list devices | jq -r --arg d "${IOS_DEVICE:-}" '
@@ -195,7 +204,7 @@ cmd_launch() {
   [ -n "$id" ] || { local app; app=$(last_app); [ -n "$app" ] || die "no bundle id and nothing built"; id=$(bundle_id "$app"); }
   case "$target" in
     sim) xcrun simctl launch "$(sim_udid)" "$id" >/dev/null; say "launched $id on $IOS_SIM" ;;
-    device) dctl device process launch --device "$(device_id)" --activate "$id" | jq -r '"launched \(.result.process.executable // $id) pid \(.result.process.processIdentifier)"' --arg id "$id" ;;
+    device) dctl device process launch --device "$(device_id)" --activate "$id" | jq -r '"launched \(.result.process.executable // $id) pid \(.result.process.processIdentifier // "?")"' --arg id "$id" || die "launch failed (locked, untrusted developer, or not installed?)" ;;
   esac
 }
 
@@ -217,9 +226,10 @@ cmd_screenshot() {
   case "$target" in
     sim) xcrun simctl io "$(sim_udid)" screenshot "$out" >/dev/null ;;
     device)
-      need idevicescreenshot
-      local hw; hw=$(device_hw_udid "$(device_id)")
-      idevicescreenshot ${hw:+-u "$hw"} "$out" >/dev/null ;;
+      # iOS 17+ dropped the old screenshotr service; pymobiledevice3 talks to the new one
+      # (needs its tunnel: `sudo pymobiledevice3 remote tunneld` running, or --tunnel).
+      need pymobiledevice3
+      pymobiledevice3 developer dvt screenshot "$out" >/dev/null ;;
   esac
   say "$out"
 }
@@ -229,7 +239,7 @@ cmd_logs() {
   [ -n "$id" ] || { local app; app=$(last_app); id=$(bundle_id "$app"); }
   case "$target" in
     sim) xcrun simctl spawn "$(sim_udid)" log stream --style compact --predicate "subsystem == \"$id\" OR process == \"${id##*.}\"" ;;
-    device) need idevicesyslog; idevicesyslog -u "$(device_hw_udid "$(device_id)")" -m "${id##*.}" ;;
+    device) need pymobiledevice3; pymobiledevice3 syslog live -m "${id##*.}" ;;
   esac
 }
 
