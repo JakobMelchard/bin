@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# hooks-install [ref] — vendor the org hooks (JakobMelchard/.githooks) into this repo.
-set -euo pipefail
-. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
-need gh git
-r=$(root) || exit 1; cd "$r"
-d=$(fetch .githooks "${1:-}")
-HOOKS_REF="${1:-main}" bash "$d/install"
