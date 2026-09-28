@@ -5,7 +5,7 @@
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need jq
-cd "$(root)"
+r=$(root) || exit 1; cd "$r"
 src=$(fetch .config)
 m="$src/manifest.json"
 examples=0; groups=""

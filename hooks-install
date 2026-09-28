@@ -3,6 +3,6 @@
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need gh git
-cd "$(root)"
-d=$(fetch .githooks "${1:-main}")
+r=$(root) || exit 1; cd "$r"
+d=$(fetch .githooks "${1:-}")
 HOOKS_REF="${1:-main}" bash "$d/install"
