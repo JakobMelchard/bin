@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+# ios — build, install and drive iOS apps on a simulator or the attached iPad. macOS + Xcode only.
+#
+#   ios devices                       simulators (booted first) and attached devices
+#   ios status [device]               pairing, developer mode, OS of the attached iPad
+#   ios boot [sim-name]               boot a simulator (default: $IOS_SIM)
+#   ios gen                           xcodegen generate when project.yml is newer than the .xcodeproj
+#   ios build [--sim|--device] [--release]      xcodebuild; prints the .app path
+#   ios test [--sim]                  xcodebuild test on the simulator
+#   ios install [--sim|--device] [app]          install the last build (or the given .app/.ipa)
+#   ios launch [--sim|--device] [bundle-id]     launch (default: bundle id of the last build)
+#   ios run [--sim|--device]          gen + build + install + launch
+#   ios screenshot [--sim|--device] [out.png]   PNG of the screen (default: build/shot-<ts>.png)
+#   ios logs [--sim|--device] [bundle-id]       stream the app's log
+#   ios uninstall [--sim|--device] [bundle-id]
+#
+# Target selection: --sim (default) or --device. Env: IOS_SIM (simulator name, default
+# "iPad Air 11-inch (M4)"), IOS_DEVICE (devicectl identifier or name, default: the first
+# connected device), IOS_SCHEME (default: the first scheme of the project), IOS_PROJECT
+# (default: the only .xcodeproj/.xcworkspace in the repo root), IOS_CONFIG (Debug).
+#
+# Device installs are signed with the team in Config/Signing.xcconfig (or DEVELOPMENT_TEAM);
+# a free Apple Development profile expires after 7 days, so `ios run --device` again.
+# bash 3.2 compatible.
+set -euo pipefail
+. "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
+need xcrun xcodebuild jq
+
+IOS_SIM="${IOS_SIM:-iPad Air 11-inch (M4)}"
+IOS_CONFIG="${IOS_CONFIG:-Debug}"
+target=sim
+
+take_target() { # strips --sim/--device/--release from "$@" into globals, echoes the rest
+  REST=()
+  for a in "$@"; do
+    case "$a" in
+      --sim) target=sim ;;
+      --device) target=device ;;
+      --release) IOS_CONFIG=Release ;;
+      *) REST[${#REST[@]}]="$a" ;;
+    esac
+  done
+}
+
+# ── discovery ────────────────────────────────────────────────────────
+sim_udid() { # booted simulator named $IOS_SIM, else any with that name
+  xcrun simctl list devices -j | jq -r --arg n "$IOS_SIM" '
+    [.devices[][] | select(.name == $n and .isAvailable)] | sort_by(.state != "Booted") | .[0].udid // empty'
+}
+
+# devicectl prints prose on stdout next to its JSON, so JSON goes through a temp file
+dctl() { local f; f=$(mktemp); xcrun devicectl "$@" --json-output "$f" >/dev/null 2>&1 || true; cat "$f"; rm -f "$f"; }
+
+device_id() { # devicectl identifier of $IOS_DEVICE (id or name) or the first connected device
+  dctl list devices | jq -r --arg d "${IOS_DEVICE:-}" '
+    [.result.devices[] | select(.connectionProperties.pairingState == "paired")]
+    | (if $d != "" then map(select(.identifier == $d or .deviceProperties.name == $d)) else . end)
+    | sort_by(.connectionProperties.tunnelState != "connected") | .[0].identifier // empty'
+}
+
+device_hw_udid() { # libimobiledevice-style UDID (00008122-…) for idevicescreenshot
+  dctl device info details --device "$1" | jq -r '.result.hardwareProperties.udid // empty'
+}
+
+project_file() {
+  if [ -n "${IOS_PROJECT:-}" ]; then printf '%s\n' "$IOS_PROJECT"; return; fi
+  local w p
+  for w in ./*.xcworkspace; do [ -d "$w" ] && { printf '%s\n' "$w"; return; }; done
+  for p in ./*.xcodeproj; do [ -d "$p" ] && { printf '%s\n' "$p"; return; }; done
+  die "no .xcodeproj/.xcworkspace here (run 'ios gen' if there is a project.yml)"
+}
+
+project_flag() { case "$1" in *.xcworkspace) echo -workspace ;; *) echo -project ;; esac; }
+
+scheme() {
+  if [ -n "${IOS_SCHEME:-}" ]; then printf '%s\n' "$IOS_SCHEME"; return; fi
+  local p; p=$(project_file)
+  xcodebuild "$(project_flag "$p")" "$p" -list -json 2>/dev/null \
+    | jq -r '(.project // .workspace).schemes[0] // empty'
+}
+
+destination() {
+  case "$target" in
+    sim)    local u; u=$(sim_udid); [ -n "$u" ] || die "simulator '$IOS_SIM' not found (xcrun simctl list devices)"; echo "platform=iOS Simulator,id=$u" ;;
+    device) local d; d=$(device_id); [ -n "$d" ] || die "no paired device (xcrun devicectl list devices)"; echo "id=$d" ;;
+  esac
+}
+
+products_dir() {
+  case "$target" in
+    sim) echo "build/DerivedData/Build/Products/$IOS_CONFIG-iphonesimulator" ;;
+    device) echo "build/DerivedData/Build/Products/$IOS_CONFIG-iphoneos" ;;
+  esac
+}
+
+last_app() { ls -d "$(products_dir)"/*.app 2>/dev/null | head -1 || true; }
+
+bundle_id() { # of an .app
+  /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Info.plist"
+}
+
+# ── commands ─────────────────────────────────────────────────────────
+cmd_devices() {
+  say "simulators:"
+  xcrun simctl list devices -j | jq -r '
+    .devices | to_entries[] | .key as $rt | .value[] | select(.isAvailable)
+    | "  \(.state|ascii_downcase)\t\(.name)\t\(.udid)\t\($rt | sub(".*SimRuntime\\.";""))"' \
+    | sort | column -t -s "$(printf '\t')"
+  say "devices:"
+  dctl list devices | jq -r '
+    .result.devices[] | "  \(.connectionProperties.tunnelState)\t\(.deviceProperties.name)\t\(.identifier)\t\(.hardwareProperties.marketingName) \(.deviceProperties.osVersionNumber)"' \
+    | column -t -s "$(printf '\t')" || say "  (none)"
+}
+
+cmd_status() {
+  local d; d=${1:-$(device_id)}; [ -n "$d" ] || die "no paired device"
+  dctl device info details --device "$d" | jq -r '.result |
+    "name\t\(.deviceProperties.name)",
+    "model\t\(.hardwareProperties.marketingName) (\(.hardwareProperties.productType))",
+    "os\t\(.deviceProperties.osVersionNumber) (\(.deviceProperties.osBuildUpdate))",
+    "udid\t\(.hardwareProperties.udid)",
+    "developer mode\t\(.deviceProperties.developerModeStatus)",
+    "pairing\t\(.connectionProperties.pairingState) / \(.connectionProperties.tunnelState)",
+    "ddi\t\(.deviceProperties.ddiServicesAvailable)"' | column -t -s "$(printf '\t')"
+}
+
+cmd_boot() {
+  local n="${1:-$IOS_SIM}" u
+  u=$(IOS_SIM="$n" sim_udid); [ -n "$u" ] || die "simulator '$n' not found"
+  xcrun simctl boot "$u" 2>/dev/null || true
+  xcrun simctl bootstatus "$u" -b >/dev/null
+  open -a Simulator --args -CurrentDeviceUDID "$u" >/dev/null 2>&1 || true
+  say "$n $u booted"
+}
+
+cmd_gen() {
+  [ -f project.yml ] || return 0
+  need xcodegen
+  local p; p=$(ls -d ./*.xcodeproj 2>/dev/null | head -1 || true)
+  if [ -z "$p" ] || [ project.yml -nt "$p/project.pbxproj" ]; then xcodegen generate --quiet; say "generated $(ls -d ./*.xcodeproj)"; fi
+}
+
+xcb() { # xcodebuild with the common flags; $1 = action
+  local action=$1; shift
+  local p s; p=$(project_file); s=$(scheme); [ -n "$s" ] || die "no scheme (set IOS_SCHEME)"
+  local extra=()
+  if [ "$target" = device ]; then
+    extra=(-allowProvisioningUpdates -allowProvisioningDeviceRegistration)
+    [ -n "${DEVELOPMENT_TEAM:-}" ] && extra[${#extra[@]}]="DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
+  fi
+  # Simulator builds keep Xcode's ad-hoc signing: without entitlements the Keychain fails (-34018).
+  set -o pipefail
+  xcodebuild "$(project_flag "$p")" "$p" -scheme "$s" -configuration "$IOS_CONFIG" \
+    -destination "$(destination)" -derivedDataPath build/DerivedData \
+    -skipMacroValidation -skipPackagePluginValidation ${extra[@]+"${extra[@]}"} "$action" "$@" \
+    | { if have xcbeautify; then xcbeautify; else grep -E --line-buffered 'error:|warning: |BUILD|TEST|Test Suite|Test Case|passed|failed|\*\*' || true; fi; }
+}
+
+cmd_build() {
+  cmd_gen
+  xcb build
+  local app; app=$(last_app); [ -n "$app" ] || die "no .app in $(products_dir)"
+  say "$app"
+}
+
+cmd_test() {
+  target=sim; cmd_gen
+  xcb test "$@"
+}
+
+cmd_install() {
+  local app="${1:-$(last_app)}"; [ -n "$app" ] || die "nothing built; ios build first"
+  case "$target" in
+    sim) local u; u=$(sim_udid); xcrun simctl bootstatus "$u" -b >/dev/null; xcrun simctl install "$u" "$app"; say "installed $(bundle_id "$app") on $IOS_SIM" ;;
+    device) local d; d=$(device_id); [ -n "$d" ] || die "no paired device"; dctl device install app --device "$d" "$app" | jq -r '"installed \(.result.installedApplications[0].bundleID) on \(.result.deviceIdentifier)"' ;;
+  esac
+}
+
+cmd_launch() {
+  local id="${1:-}"
+  [ -n "$id" ] || { local app; app=$(last_app); [ -n "$app" ] || die "no bundle id and nothing built"; id=$(bundle_id "$app"); }
+  case "$target" in
+    sim) xcrun simctl launch "$(sim_udid)" "$id" >/dev/null; say "launched $id on $IOS_SIM" ;;
+    device) dctl device process launch --device "$(device_id)" --activate "$id" | jq -r '"launched \(.result.process.executable // $id) pid \(.result.process.processIdentifier)"' --arg id "$id" ;;
+  esac
+}
+
+cmd_uninstall() {
+  local id="${1:-}"
+  [ -n "$id" ] || { local app; app=$(last_app); id=$(bundle_id "$app"); }
+  case "$target" in
+    sim) xcrun simctl uninstall "$(sim_udid)" "$id" ;;
+    device) xcrun devicectl device uninstall app --device "$(device_id)" "$id" >/dev/null ;;
+  esac
+  say "uninstalled $id"
+}
+
+cmd_run() { cmd_build >/dev/null; cmd_install; cmd_launch; }
+
+cmd_screenshot() {
+  mkdir -p build
+  local out="${1:-build/shot-$(date +%Y%m%d-%H%M%S).png}"
+  case "$target" in
+    sim) xcrun simctl io "$(sim_udid)" screenshot "$out" >/dev/null ;;
+    device)
+      need idevicescreenshot
+      local hw; hw=$(device_hw_udid "$(device_id)")
+      idevicescreenshot ${hw:+-u "$hw"} "$out" >/dev/null ;;
+  esac
+  say "$out"
+}
+
+cmd_logs() {
+  local id="${1:-}"
+  [ -n "$id" ] || { local app; app=$(last_app); id=$(bundle_id "$app"); }
+  case "$target" in
+    sim) xcrun simctl spawn "$(sim_udid)" log stream --style compact --predicate "subsystem == \"$id\" OR process == \"${id##*.}\"" ;;
+    device) need idevicesyslog; idevicesyslog -u "$(device_hw_udid "$(device_id)")" -m "${id##*.}" ;;
+  esac
+}
+
+cmd=${1:-}; [ $# -gt 0 ] && shift
+take_target "$@"; set -- ${REST[@]+"${REST[@]}"}
+case "$cmd" in
+  devices)    cmd_devices ;;
+  status)     cmd_status "$@" ;;
+  boot)       cmd_boot "$@" ;;
+  gen)        cmd_gen ;;
+  build)      cmd_build ;;
+  test)       cmd_test "$@" ;;
+  install)    cmd_install "$@" ;;
+  launch)     cmd_launch "$@" ;;
+  run)        cmd_run ;;
+  screenshot) cmd_screenshot "$@" ;;
+  logs)       cmd_logs "$@" ;;
+  uninstall)  cmd_uninstall "$@" ;;
+  *)          sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+esac
