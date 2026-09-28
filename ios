@@ -21,6 +21,10 @@
 #
 # Device installs are signed with the team in Config/Signing.xcconfig (or DEVELOPMENT_TEAM);
 # a free Apple Development profile expires after 7 days, so `ios run --device` again.
+# IOS_SIGN_IDENTITY=<SHA-1 of a codesigning identity> pins the certificate when the keychain
+# holds several with the same name (Xcode issues a new one per sign-in; a key created in the
+# GUI may refuse codesign from a terminal session — pick one that `security find-identity`
+# lists and that signs a scratch file without a prompt).
 # bash 3.2 compatible.
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
@@ -147,6 +151,7 @@ xcb() { # xcodebuild with the common flags; $1 = action
   if [ "$target" = device ]; then
     extra=(-allowProvisioningUpdates -allowProvisioningDeviceRegistration)
     [ -n "${DEVELOPMENT_TEAM:-}" ] && extra[${#extra[@]}]="DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
+    [ -n "${IOS_SIGN_IDENTITY:-}" ] && extra[${#extra[@]}]="CODE_SIGN_IDENTITY=$IOS_SIGN_IDENTITY"
   fi
   # Simulator builds keep Xcode's ad-hoc signing: without entitlements the Keychain fails (-34018).
   set -o pipefail
