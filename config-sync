@@ -7,6 +7,8 @@ set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need jq
 r=$(root) || exit 1; cd "$r"
+# Templated repos get these files from JakobMelchard/template; a copy here would fight copier update.
+[ -f .copier-answers.yml ] && die "$(pwd) is rendered from $ORG/template: run \`uvx copier update --defaults\` instead"
 src=$(fetch .config)
 m="$src/manifest.json"
 examples=0; groups=""
