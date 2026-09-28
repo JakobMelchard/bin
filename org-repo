@@ -2,6 +2,7 @@
 # org-repo — create and align JakobMelchard repos.
 #
 #   org-repo new <name> --template <hx-app|go|py|c-cpp|infra|cf> [--public] [-d "description"]
+#                                    scaffold, prek hooks pinned to JakobMelchard/.githooks, CI caller
 #   org-repo ls                      names, visibility, archived, default branch
 #   org-repo settings [repo…]        drift of live settings vs .github/infra/settings.json
 #   org-repo sync [repo…]            apply repo_defaults (+ per-repo overrides) via gh api
@@ -87,6 +88,44 @@ cmd_apps() {
   done
 }
 
+prek_config() { # prek_config <template> — .pre-commit-config.yaml pinning the org hooks for a template
+  local own="conventional-commit" extra=""
+  case "$1" in
+    hx-app|cf) own="$own eslint" ;;
+    go)        own="$own gofmt go-build" ;;
+    py)        extra="  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.9
+    hooks:
+      - id: ruff-check
+" ;;
+    infra|c-cpp)
+      [ "$1" = infra ] && own="$own tofu-fmt"
+      own="$own shell-syntax"
+      extra="  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+        exclude_types: [zsh]
+" ;;
+  esac
+  cat <<Y
+# Hooks come from pinned repos; Renovate bumps the revs. CI runs the same config through
+# $ORG/.github hooks.yml. Setup: brew install prek && prek install
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+${extra}  - repo: https://github.com/$ORG/.githooks
+    rev: v1.0.0
+    hooks:
+Y
+  for h in $own; do printf '      - id: %s\n' "$h"; done
+}
+
 cmd_new() {
   local name="" tpl="" vis=--private desc=""
   while [ $# -gt 0 ]; do
@@ -158,9 +197,18 @@ Y
     ;;
   esac
 
+  prek_config "$tpl" > .pre-commit-config.yaml
+  # the hooks job needs no node_modules; eslint runs in node.yml
+  case "$tpl" in hx-app|cf) hooks_with="
+    with:
+      skip: eslint" ;; *) hooks_with="" ;; esac
+  cat >> .github/workflows/ci.yml <<Y
+  hooks:
+    uses: $ORG/.github/.github/workflows/hooks.yml@main$hooks_with
+Y
+
   git add -A && git commit -q -m "chore: scaffold from $tpl template"
-  "$BIN/hooks-install"
-  git add -A && git commit -q -m "chore: vendor org hooks"
+  if command -v prek >/dev/null; then prek install >/dev/null; else say "note: prek not installed, hooks skipped (brew install prek && prek install)"; fi
   git push -q -u origin main
   cmd_sync "$name"
   say

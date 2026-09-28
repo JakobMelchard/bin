@@ -10,3 +10,6 @@ jobs:
     with:
       paths: .
       severity: warning
+
+  hooks:
+    uses: JakobMelchard/.github/.github/workflows/hooks.yml@main
