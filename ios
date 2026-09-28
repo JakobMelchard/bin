@@ -187,10 +187,17 @@ xcb() { # xcodebuild with the common flags; $1 = action
   fi
   # Simulator builds keep Xcode's ad-hoc signing: without entitlements the Keychain fails (-34018).
   set -o pipefail
-  xcodebuild "$(project_flag "$p")" "$p" -scheme "$s" -configuration "$IOS_CONFIG" \
+  mkdir -p build
+  # full log kept for post-mortems; the filtered view is what scrolls by
+  if xcodebuild "$(project_flag "$p")" "$p" -scheme "$s" -configuration "$IOS_CONFIG" \
     -destination "$(destination)" -derivedDataPath build/DerivedData \
-    -skipMacroValidation -skipPackagePluginValidation ${extra[@]+"${extra[@]}"} "$action" "$@" \
+    -skipMacroValidation -skipPackagePluginValidation ${extra[@]+"${extra[@]}"} "$action" "$@" 2>&1 \
+    | tee build/xcodebuild.log \
     | { if have xcbeautify; then xcbeautify; else grep -E --line-buffered 'error:|warning: |BUILD|TEST|Test Suite|Test Case|passed|failed|\*\*' || true; fi; }
+  then return 0; fi
+  echo "ios: xcodebuild failed; errors from build/xcodebuild.log:" >&2
+  grep -E -i 'error:|error ' build/xcodebuild.log | grep -v -E 'appintentsmetadataprocessor|warning:' | sort -u | tail -15 >&2
+  return 1
 }
 
 cmd_build() {
