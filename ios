@@ -21,13 +21,12 @@
 #
 # Device installs are signed with the team in Config/Signing.xcconfig (or DEVELOPMENT_TEAM);
 # a free Apple Development profile expires after 7 days, so `ios run --device` again.
-# IOS_SIGN_IDENTITY=<SHA-1 of a codesigning identity> pins the certificate when the keychain
-# holds several with the same name (Xcode issues a new one per sign-in; a key created in the
-# GUI may refuse codesign from a terminal session — pick one that `security find-identity`
-# lists and that signs a scratch file without a prompt). Automatic signing rejects a pinned
-# identity, so this switches to manual signing with the newest installed profile for the
-# bundle id (IOS_PROFILE=<uuid or name> overrides). Run once without the pin to let Xcode
-# create the profile.
+# Signing stays automatic: Xcode-managed profiles refuse manual signing and command-line
+# PROVISIONING_PROFILE_SPECIFIER leaks into every Swift package target. When the keychain
+# holds several "Apple Development" identities (Xcode issues one per sign-in, and a key made
+# in the GUI may refuse codesign from a terminal session), delete the extra ones with
+# `security delete-identity -Z <sha1>` until one that signs a scratch file without a prompt
+# remains; `security find-identity -v -p codesigning` lists them.
 # bash 3.2 compatible.
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
@@ -106,27 +105,6 @@ bundle_id() { # of an .app
   /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Info.plist"
 }
 
-bundle_id_setting() { # <project> <scheme> -> PRODUCT_BUNDLE_IDENTIFIER from the build settings
-  xcodebuild "$(project_flag "$1")" "$1" -scheme "$2" -showBuildSettings 2>/dev/null \
-    | awk -F' = ' '$1 ~ /^ *PRODUCT_BUNDLE_IDENTIFIER$/ {print $2; exit}'
-}
-
-# newest installed profile whose app id matches <bundle-id> (or a wildcard), as its UUID
-profile_for() {
-  local id=$1 f best="" best_t=0 t appid uuid
-  for f in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"/*.mobileprovision \
-           "$HOME/Library/MobileDevice/Provisioning Profiles"/*.mobileprovision; do
-    [ -f "$f" ] || continue
-    appid=$(security cms -D -i "$f" 2>/dev/null | plutil -extract Entitlements.application-identifier raw -o - - 2>/dev/null || true)
-    appid=${appid#*.}   # strip the team prefix
-    case "$id" in "$appid") ;; *) [ "$appid" = '*' ] || continue ;; esac
-    t=$(stat -f %m "$f")
-    if [ "$t" -gt "$best_t" ]; then best_t=$t; best=$f; fi
-  done
-  [ -n "$best" ] || return 0
-  uuid=$(security cms -D -i "$best" 2>/dev/null | plutil -extract UUID raw -o - - 2>/dev/null)
-  printf '%s\n' "$uuid"
-}
 
 # ── commands ─────────────────────────────────────────────────────────
 cmd_devices() {
@@ -176,14 +154,6 @@ xcb() { # xcodebuild with the common flags; $1 = action
   if [ "$target" = device ]; then
     extra=(-allowProvisioningUpdates -allowProvisioningDeviceRegistration)
     [ -n "${DEVELOPMENT_TEAM:-}" ] && extra[${#extra[@]}]="DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
-    if [ -n "${IOS_SIGN_IDENTITY:-}" ]; then
-      local prof; prof="${IOS_PROFILE:-$(profile_for "$(bundle_id_setting "$p" "$s")")}"
-      [ -n "$prof" ] || die "no installed provisioning profile for this bundle id; run once without IOS_SIGN_IDENTITY or set IOS_PROFILE"
-      extra[${#extra[@]}]="CODE_SIGN_STYLE=Manual"
-      extra[${#extra[@]}]="CODE_SIGN_IDENTITY=$IOS_SIGN_IDENTITY"
-      extra[${#extra[@]}]="PROVISIONING_PROFILE_SPECIFIER=$prof"
-      extra[${#extra[@]}]="-allowProvisioningUpdates"
-    fi
   fi
   # Simulator builds keep Xcode's ad-hoc signing: without entitlements the Keychain fails (-34018).
   set -o pipefail
