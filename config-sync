@@ -1,25 +1,79 @@
 #!/usr/bin/env bash
-# config-sync [--examples] [group…] — copy org configs from JakobMelchard/.config into this repo per
-# its manifest.json. Groups are the copied top-level dirs there (ruff gitleaks editorconfig); no group
-# = all. eslint/prettier/tsconfig are not copied: JS repos install the package @jakobmelchard/config.
+# config-sync [--check] [--ref <ref>] [--examples] [group…] — copy org configs from JakobMelchard/.config
+# into this repo per its manifest.json. Groups are the copied top-level dirs there (ruff gitleaks
+# editorconfig swift-format tokens); no group = all. eslint/prettier/tsconfig are not copied: JS repos
+# install the package @jakobmelchard/config.
+# opt_in sources (tokens) are copied only when this repo carries the named file, whose first line is
+# the destination: `.config/tokens.path` holding e.g. `internal/ui/static/tokens.css`.
+# --check writes nothing and exits 1 when a vendored copy differs from .config (header line ignored);
+# with no group it checks the copies this repo carries and its opt-ins, for CI.
+# --ref vendors from a .config tag or branch (gh tarball) instead of main.
 # --examples also seeds release-please/renovate if absent.
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 need jq
-r=$(root) || exit 1; cd "$r"
-# Templated repos get these files from JakobMelchard/template; a copy here would fight copier update.
-[ -f .copier-answers.yml ] && die "$(pwd) is rendered from $ORG/template: run \`uvx copier update --defaults\` instead"
-src=$(fetch .config)
-m="$src/manifest.json"
-examples=0; groups=""
-for a in "$@"; do case "$a" in --examples) examples=1 ;; *) groups="$groups $a" ;; esac; done
-say "config-sync -> $(pwd)"
-jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' "$m" | while IFS=$'\t' read -r from to; do
-  if [ -n "$groups" ]; then case " $groups " in *" ${from%%/*} "*) ;; *) continue ;; esac; fi
-  vendor "$src/$from" "$to" ".config/$from"
+examples=0; check=0; ref=""; groups=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --examples) examples=1 ;;
+    --check) check=1 ;;
+    --ref) [ $# -ge 2 ] || die "--ref needs a value"; ref=$2; shift ;;
+    --ref=*) ref=${1#--ref=} ;;
+    -*) die "unknown flag $1" ;;
+    *) groups="$groups $1" ;;
+  esac
+  shift
 done
+[ "$check" = 1 ] && [ "$examples" = 1 ] && die "--check and --examples do not mix"
+r=$(root) || exit 1; cd "$r"
+# Templated repos get the fixed files from JakobMelchard/template; a copy here would fight copier
+# update. opt_in sources are per repo, so the template does not carry them: those still sync.
+templated=0; [ -f .copier-answers.yml ] && templated=1
+src=$(fetch .config ${ref:+"$ref"})
+m="$src/manifest.json"
+rev=$(fetch_rev "$src")
+
+for g in $groups; do
+  jq -e --arg g "$g" '.files + (.opt_in // {}) | keys | map(split("/")[0]) | index($g)' "$m" >/dev/null ||
+    die "no group $g in $ORG/.config@$rev manifest.json"
+done
+wanted() { [ -z "$groups" ] && return 0; case " $groups " in *" ${1%%/*} "*) return 0 ;; esac; return 1; }
+drift=0; n=0
+one() { # one <from> <to>: vendor, or check under --check
+  n=$((n + 1))
+  if [ "$check" = 1 ]; then vendor_check "$src/$1" "$2" ".config/$1" "$rev" || drift=1
+  else vendor "$src/$1" "$2" ".config/$1" "$rev"; fi
+}
+copier_msg="$(pwd) is rendered from $ORG/template: run \`uvx copier update --defaults\` instead"
+
+say "config-sync${ref:+ @$ref} ($rev)$([ "$check" = 1 ] && echo ' --check') -> $(pwd)"
+while IFS=$'\t' read -r from to; do
+  if ! wanted "$from"; then continue; fi
+  if [ "$templated" = 1 ]; then
+    [ -n "$groups" ] && die "$copier_msg"
+    continue
+  fi
+  # --check with no group checks what the repo carries, as fleet-sync refreshes it
+  if [ "$check" = 1 ] && [ -z "$groups" ] && [ ! -e "$to" ]; then continue; fi
+  one "$from" "$to"
+done < <(jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' "$m")
+while IFS=$'\t' read -r from optfile; do
+  if ! wanted "$from"; then continue; fi
+  if [ ! -f "$optfile" ]; then
+    [ -n "$groups" ] && die "${from%%/*} is opt-in: write its destination path into $optfile first"
+    continue
+  fi
+  to=$(sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$optfile")
+  case "$to" in
+    ''|/*|../*|*/../*|..) die "$optfile: want a repo-relative destination path on its first line, got '$to'" ;;
+  esac
+  one "$from" "$to"
+done < <(jq -r '(.opt_in // {}) | to_entries[] | "\(.key)\t\(.value)"' "$m")
 if [ "$examples" = 1 ]; then
-  jq -r '.examples | to_entries[] | "\(.key)\t\(.value)"' "$m" | while IFS=$'\t' read -r from to; do
+  [ "$templated" = 1 ] && die "$copier_msg"
+  while IFS=$'\t' read -r from to; do
     if [ -e "$to" ]; then say "  keep $to (exists)"; else cp "$src/$from" "$to"; say "  seed $to"; fi
-  done
+  done < <(jq -r '.examples | to_entries[] | "\(.key)\t\(.value)"' "$m")
 fi
+[ "$templated" = 1 ] && [ "$n" = 0 ] && die "$copier_msg"
+if [ "$drift" = 1 ]; then die "vendored copies drifted from $ORG/.config; run config-sync${groups:+$groups}${ref:+ --ref $ref}"; fi

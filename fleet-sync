@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # fleet-sync [--dry-run] [repo…] — refresh the vendored org configs in every repo and open one PR
 # per repo that changed. Refreshes only what a repo already carries: the config-sync groups whose
-# copy exists. Nothing is added to a repo that lacks it. Hooks are not vendored any more: repos pin
+# copy exists, plus opt-in groups whose opt-in file exists (tokens: .config/tokens.path). Nothing is
+# added to a repo that lacks it. Hooks are not vendored any more: repos pin
 # JakobMelchard/.githooks in .pre-commit-config.yaml and Renovate bumps it.
-# Repos rendered from JakobMelchard/template (they carry .copier-answers.yml) are skipped: their
-# vendored configs come with the template, via `uvx copier update` or Renovate's copier PRs.
+# Repos rendered from JakobMelchard/template (they carry .copier-answers.yml) get only their opt-in
+# groups refreshed: their other vendored configs come with the template, via `uvx copier update` or
+# Renovate's copier PRs.
 # No args: every non-archived repo in .github/infra/settings.json except the platform repos.
 # --dry-run prints the diff and pushes nothing.
 #
@@ -38,11 +40,18 @@ for r in $repos; do
   if ! git clone -q --depth 1 "$(clone_url "$r")" "$d" 2>/dev/null; then say "$r: clone failed, skipped"; continue; fi
   (
     cd "$d"
-    if [ -f .copier-answers.yml ]; then say "$r: templated, skipped (copier update / Renovate)"; exit 0; fi
     groups=""
-    while IFS=$'\t' read -r from to; do
-      [ -e "$to" ] && groups="$groups ${from%%/*}"
-    done < <(jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
+    # templated repos take the fixed files from copier; only their opt-in groups are refreshed here
+    if [ ! -f .copier-answers.yml ]; then
+      while IFS=$'\t' read -r from to; do
+        [ -e "$to" ] && groups="$groups ${from%%/*}"
+      done < <(jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
+    fi
+    # opt-in groups (tokens): the repo opted in by carrying the named file (.config/tokens.path)
+    while IFS=$'\t' read -r from optfile; do
+      [ -f "$optfile" ] && groups="$groups ${from%%/*}"
+    done < <(jq -r '(.opt_in // {}) | to_entries[] | "\(.key)\t\(.value)"' "$manifest")
+    if [ -z "$groups" ] && [ -f .copier-answers.yml ]; then say "$r: templated, skipped (copier update / Renovate)"; exit 0; fi
     # shellcheck disable=SC2086 # space-separated groups by construction
     [ -n "$groups" ] && "$BIN/config-sync" $groups >/dev/null
     if [ -z "$(git status --porcelain)" ]; then say "$r: up to date"; exit 0; fi
