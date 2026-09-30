@@ -13,6 +13,7 @@
 #   ios screenshot [--sim|--device] [out.png]   PNG of the screen (default: build/shot-<ts>.png)
 #   ios logs [--sim|--device] [bundle-id]       stream the app's log
 #   ios uninstall [--sim|--device] [bundle-id]
+#   ios ipa                           Release build for any iOS device, zipped to build/<App>.ipa (SideStore)
 #
 # Target selection: --sim (default) or --device. Env: IOS_SIM (simulator name, default
 # "iPad Air 11-inch (M4)"), IOS_DEVICE (devicectl identifier or name, default: the first
@@ -83,13 +84,14 @@ destination() {
   case "$target" in
     sim)    local u; u=$(sim_udid); [ -n "$u" ] || die "simulator '$IOS_SIM' not found (xcrun simctl list devices)"; echo "platform=iOS Simulator,id=$u" ;;
     device) local d; d=$(device_id); [ -n "$d" ] || die "no paired device (xcrun devicectl list devices)"; echo "id=$d" ;;
+    generic) echo "generic/platform=iOS" ;;
   esac
 }
 
 products_dir() {
   case "$target" in
     sim) echo "build/DerivedData/Build/Products/$IOS_CONFIG-iphonesimulator" ;;
-    device) echo "build/DerivedData/Build/Products/$IOS_CONFIG-iphoneos" ;;
+    device|generic) echo "build/DerivedData/Build/Products/$IOS_CONFIG-iphoneos" ;;
   esac
 }
 
@@ -144,7 +146,7 @@ xcb() { # xcodebuild with the common flags; $1 = action
   local action=$1; shift
   local p s; p=$(project_file); s=$(scheme); [ -n "$s" ] || die "no scheme (set IOS_SCHEME)"
   local extra=()
-  if [ "$target" = device ]; then
+  if [ "$target" != sim ]; then
     extra=(-allowProvisioningUpdates -allowProvisioningDeviceRegistration)
     [ -n "${DEVELOPMENT_TEAM:-}" ] && extra[${#extra[@]}]="DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
   fi
@@ -197,6 +199,15 @@ cmd_uninstall() {
 
 cmd_run() { cmd_build >/dev/null; cmd_install; cmd_launch; }
 
+cmd_ipa() { # signed with the dev team so entitlements (app groups) survive SideStore's re-sign
+  target=generic; IOS_CONFIG=Release
+  cmd_build >/dev/null
+  local app n; app=$(last_app); [ -n "$app" ] || die "no .app in $(products_dir)"; n=$(basename "$app" .app)
+  rm -rf build/Payload build/"$n".ipa; mkdir build/Payload; cp -R "$app" build/Payload/
+  (cd build && zip -qry "$n".ipa Payload && rm -rf Payload)
+  say "build/$n.ipa"
+}
+
 cmd_screenshot() {
   mkdir -p build
   local out="${1:-build/shot-$(date +%Y%m%d-%H%M%S).png}"
@@ -234,5 +245,6 @@ case "$cmd" in
   screenshot) cmd_screenshot "$@" ;;
   logs)       cmd_logs "$@" ;;
   uninstall)  cmd_uninstall "$@" ;;
-  *)          sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  ipa)        cmd_ipa ;;
+  *)          sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
