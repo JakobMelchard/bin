@@ -4,7 +4,7 @@
 #   ios devices                       simulators (booted first) and attached devices
 #   ios status [device]               pairing, developer mode, OS of the attached iPad
 #   ios boot [sim-name]               boot a simulator (default: $IOS_SIM)
-#   ios gen                           xcodegen generate when project.yml is newer than the .xcodeproj
+#   ios gen                           xcodegen generate when the spec or the source file list changed
 #   ios build [--sim|--device] [--release]      xcodebuild; prints the .app path
 #   ios test [--sim]                  xcodebuild test on the simulator
 #   ios install [--sim|--device] [app]          install the last build (or the given .app/.ipa)
@@ -136,8 +136,9 @@ cmd_boot() {
 cmd_gen() {
   [ -f project.yml ] || return 0
   need xcodegen
-  local p; p=$(ls -d ./*.xcodeproj 2>/dev/null | head -1 || true)
-  if [ -z "$p" ] || [ project.yml -nt "$p/project.pbxproj" ]; then xcodegen generate --quiet; say "generated $(ls -d ./*.xcodeproj)"; fi
+  # --use-cache hashes the spec and the source file list, so adding or deleting a file
+  # regenerates too; comparing mtimes against project.yml missed that.
+  xcodegen generate --quiet --use-cache
 }
 
 xcb() { # xcodebuild with the common flags; $1 = action
