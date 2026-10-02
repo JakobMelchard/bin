@@ -4,7 +4,8 @@
 # editorconfig swift-format tokens); no group = all. eslint/prettier/tsconfig are not copied: JS repos
 # install the package @jakobmelchard/config.
 # opt_in sources (tokens) are copied only when this repo carries the named file, whose first line is
-# the destination: `.config/tokens.path` holding e.g. `internal/ui/static/tokens.css`.
+# the destination: `.config/tokens.path` holding e.g. `internal/ui/static/tokens.css` for tokens.css,
+# `.config/tokens-swift.path` for tokens.swift. A group with several outputs syncs the ones opted in.
 # --check writes nothing and exits 1 when a vendored copy differs from .config (header line ignored);
 # with no group it checks the copies this repo carries and its opt-ins, for CI.
 # --ref vendors from a .config tag or branch (gh tarball) instead of main.
@@ -57,10 +58,17 @@ while IFS=$'\t' read -r from to; do
   if [ "$check" = 1 ] && [ -z "$groups" ] && [ ! -e "$to" ]; then continue; fi
   one "$from" "$to"
 done < <(jq -r '.files | to_entries[] | "\(.key)\t\(.value)"' "$m")
+opted() { # opted <group>: this repo carries an opt-in file of the group (tokens has one per output)
+  local f
+  for f in $(jq -r --arg g "$1" '(.opt_in // {}) | to_entries[] | select(.key | startswith($g + "/")) | .value' "$m"); do
+    [ -f "$f" ] && return 0
+  done
+  return 1
+}
 while IFS=$'\t' read -r from optfile; do
   if ! wanted "$from"; then continue; fi
   if [ ! -f "$optfile" ]; then
-    [ -n "$groups" ] && die "${from%%/*} is opt-in: write its destination path into $optfile first"
+    [ -n "$groups" ] && ! opted "${from%%/*}" && die "${from%%/*} is opt-in: write its destination path into $optfile first"
     continue
   fi
   to=$(sed -n '1{s/^[[:space:]]*//;s/[[:space:]]*$//;p;}' "$optfile")

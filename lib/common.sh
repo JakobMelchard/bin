@@ -58,6 +58,7 @@ vendored() {
     *.toml|*.yml|*.yaml|*editorconfig)
             echo "# VENDORED from $ORG/$label - do not edit here; run config-sync." ;;
     *.css)  echo "/* VENDORED from $ORG/${label%%/*} ${label#*/} @$rev. Do not edit; run config-sync. */" ;;
+    *.swift) echo "// VENDORED from $ORG/${label%%/*} ${label#*/} @$rev. Do not edit; run config-sync." ;;
   esac      # json/markdown: no comment syntax, copied verbatim
   cat "$src"
 }
