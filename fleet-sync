@@ -18,7 +18,7 @@ need gh git jq
 
 BRANCH=chore/fleet-sync
 TITLE="chore: refresh vendored org config"
-PLATFORM=" .github .config .githooks .agents .devcontainer bin template "
+PLATFORM=" .github .config .githooks .agents bin template "
 dry=0; repos=""
 for a in "$@"; do case "$a" in --dry-run) dry=1 ;; -*) die "unknown flag $a" ;; *) repos="$repos $a" ;; esac; done
 if [ -z "$repos" ]; then

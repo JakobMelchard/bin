@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# dev-init <template> — copy a devcontainer template from JakobMelchard/.devcontainer into this repo.
-# Templates: hx-app go py c-cpp infra cf
+# dev-init <template>: copy a devcontainer template from JakobMelchard/template (devcontainer/templates/,
+# formerly the .devcontainer repo) into this repo. Templates: hx-app go py c-cpp infra cf
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd)/lib/common.sh"
 t=${1:?usage: dev-init <template>}
 r=$(root) || exit 1; cd "$r"
 # Templated repos get these files from JakobMelchard/template; a copy here would fight copier update.
 [ -f .copier-answers.yml ] && die "$(pwd) is rendered from $ORG/template: run \`uvx copier update --defaults\` instead"
-src=$(fetch .devcontainer)
+src=$(fetch template)/devcontainer
 [ -d "$src/templates/$t/.devcontainer" ] || die "no template '$t' (have: $(cd "$src/templates" && ls | tr '\n' ' '))"
 [ -e .devcontainer ] && die ".devcontainer exists — remove it first"
 cp -R "$src/templates/$t/.devcontainer" .devcontainer
