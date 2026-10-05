@@ -3,7 +3,8 @@
 #
 #   ios devices                       simulators (booted first) and attached devices
 #   ios status [device]               pairing, developer mode, OS of the attached iPad
-#   ios boot [sim-name]               boot a simulator (default: $IOS_SIM)
+#   ios boot [--show] [sim-name]      boot a simulator headless (default: $IOS_SIM); --show opens
+#                                     Simulator.app in the background (no focus change)
 #   ios gen                           xcodegen generate when the spec or the source file list changed
 #   ios build [--sim|--device] [--release]      xcodebuild; prints the .app path
 #   ios test [--sim]                  xcodebuild test on the simulator
@@ -126,12 +127,14 @@ cmd_status() {
     "ddi\t\(.deviceProperties.ddiServicesAvailable)"' | column -t -s "$(printf '\t')"
 }
 
-cmd_boot() {
-  local n="${1:-$IOS_SIM}" u
+cmd_boot() { # headless: Simulator.app only with --show, then without taking focus
+  local show=0 n u
+  [ "${1:-}" = --show ] && { show=1; shift; }
+  n="${1:-$IOS_SIM}"
   u=$(IOS_SIM="$n" sim_udid); [ -n "$u" ] || die "simulator '$n' not found"
   xcrun simctl boot "$u" 2>/dev/null || true
   xcrun simctl bootstatus "$u" -b >/dev/null
-  open -a Simulator --args -CurrentDeviceUDID "$u" >/dev/null 2>&1 || true
+  [ $show = 1 ] && { open -g -a Simulator --args -CurrentDeviceUDID "$u" >/dev/null 2>&1 || true; }
   say "$n $u booted"
 }
 
@@ -247,5 +250,5 @@ case "$cmd" in
   logs)       cmd_logs "$@" ;;
   uninstall)  cmd_uninstall "$@" ;;
   ipa)        cmd_ipa ;;
-  *)          sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+  *)          sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
