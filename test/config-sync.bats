@@ -127,12 +127,17 @@ setup() { common_setup; }
 }
 
 @test "--ref vendors from the gh tarball and stamps the tag" {
+  c=$WS/.config
+  git -C "$c" checkout -q -b old
+  echo ':root { --c: blue; }' > "$c/tokens/tokens.css"
+  git -C "$c" commit -qam old && git -C "$c" tag v1.2.3 && git -C "$c" checkout -q main
   cd "$R"
   mkdir -p .config && echo web/tokens.css > .config/tokens.path
   run "$BIN/config-sync" --ref v1.2.3 tokens
   [ "$status" -eq 0 ]
   [[ "$output" == "config-sync @v1.2.3 (v1.2.3) -> "* ]] || false
   [[ "$(head -1 web/tokens.css)" == *"@v1.2.3. Do not edit"* ]] || false
+  [ "$(tail -1 web/tokens.css)" = ":root { --c: blue; }" ]
   grep -qx 'api repos/JakobMelchard/.config/tarball/v1.2.3' "$GH_LOG"
 }
 

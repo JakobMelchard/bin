@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fake gh for the bats suite: logs every call to $GH_LOG, answers from $GH_FIXTURES, applies -q
-# with jq as gh does. Tarballs are built from the fixture clones under $WORKSPACES_ROOT/$ORG.
+# with jq as gh does. Tarballs are git archives of the fixture clones under $WORKSPACES_ROOT/$ORG.
 set -euo pipefail
 printf '%s\n' "$*" >> "$GH_LOG"
 q=""; a=()
@@ -12,10 +12,8 @@ set -- "${a[@]}"
 
 case "$*" in
   "api repos/"*"/tarball/"*)
-    r=${2#repos/*/}; r=${r%%/*}; d=$(mktemp -d); top="JakobMelchard-$r-abc1234"
-    cp -R "$WORKSPACES_ROOT/JakobMelchard/$r" "$d/$top"
-    COPYFILE_DISABLE=1 tar -czf - --exclude .git -C "$d" "$top"
-    rm -rf "$d"; exit 0 ;;
+    r=${2#repos/*/}; r=${r%%/*}
+    exec git -C "$WORKSPACES_ROOT/JakobMelchard/$r" archive --format=tar.gz --prefix="JakobMelchard-$r-abc1234/" "${2##*/}" ;;
 esac
 
 reply() {
