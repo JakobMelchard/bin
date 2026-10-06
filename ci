@@ -5,7 +5,7 @@ set -euo pipefail
 need gh jq
 if [ $# -eq 0 ]; then
   set --
-  while IFS= read -r __n; do set -- "$@" "$__n"; done < <(gh repo list "$ORG" --limit 200 --json name,isArchived -q '.[] | select(.isArchived|not) | .name' | sort)
+  while IFS= read -r __n; do set -- "$@" "$__n"; done < <(org_repos)
 fi
 printf '%-26s %-10s %-18s %s\n' REPO STATUS WORKFLOW WHEN
 for r in "$@"; do

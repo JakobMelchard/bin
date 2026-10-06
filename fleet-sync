@@ -37,7 +37,7 @@ clone_url() { # https with the token in CI, the SSH alias locally (bare github.c
 
 for r in $repos; do
   d="$tmp/$r"
-  if ! git clone -q --depth 1 "$(clone_url "$r")" "$d" 2>/dev/null; then say "$r: clone failed, skipped"; continue; fi
+  if ! git clone -q --depth 1 "$(clone_url "$r")" "$d"; then say "$r: clone failed, skipped"; continue; fi
   (
     cd "$d"
     groups=""

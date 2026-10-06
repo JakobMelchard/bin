@@ -51,7 +51,7 @@ sim_udid() { # booted simulator named $IOS_SIM, else any with that name
 }
 
 # devicectl prints prose on stdout next to its JSON, so JSON goes through a temp file
-dctl() { local f; f=$(mktemp); xcrun devicectl "$@" --json-output "$f" >/dev/null 2>&1 || true; cat "$f"; rm -f "$f"; }
+dctl() { local f; f=$(mktemp); xcrun devicectl "$@" --json-output "$f" >/dev/null || true; cat "$f"; rm -f "$f"; }
 
 device_id() { # devicectl identifier of $IOS_DEVICE (id or name) or the first connected device
   dctl list devices | jq -r --arg d "${IOS_DEVICE:-}" '
@@ -96,7 +96,7 @@ products_dir() {
   esac
 }
 
-last_app() { ls -d "$(products_dir)"/*.app 2>/dev/null | head -1 || true; }
+last_app() { local a; for a in "$(products_dir)"/*.app; do [ -d "$a" ] && { printf '%s\n' "$a"; return; }; done; return 0; }
 
 bundle_id() { # of an .app
   /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Info.plist"

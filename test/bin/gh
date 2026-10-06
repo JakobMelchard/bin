@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Fake gh for the bats suite: logs every call to $GH_LOG, answers from $GH_FIXTURES, applies -q
+# with jq as gh does. Tarballs are built from the fixture clones under $WORKSPACES_ROOT/$ORG.
+set -euo pipefail
+printf '%s\n' "$*" >> "$GH_LOG"
+q=""; a=()
+while [ $# -gt 0 ]; do
+  case "$1" in -q|--jq) q=$2; shift ;; *) a[${#a[@]}]=$1 ;; esac
+  shift
+done
+set -- "${a[@]}"
+
+case "$*" in
+  "api repos/"*"/tarball/"*)
+    r=${2#repos/*/}; r=${r%%/*}; d=$(mktemp -d); top="JakobMelchard-$r-abc1234"
+    cp -R "$WORKSPACES_ROOT/JakobMelchard/$r" "$d/$top"
+    COPYFILE_DISABLE=1 tar -czf - --exclude .git -C "$d" "$top"
+    rm -rf "$d"; exit 0 ;;
+esac
+
+reply() {
+  case "$*" in
+    "repo list "*) cat "$GH_FIXTURES/repos.json" ;;
+    "run list "*|"pr list "*) echo '[]' ;;
+    "pr create "*) echo "https://github.com/JakobMelchard/x/pull/1" ;;
+    "pr edit "*) ;;
+    *"--input -"*) cat >/dev/null ;;
+    "api -X "*) ;;
+    "api orgs/"*"/installations") cat "$GH_FIXTURES/installations.json" ;;
+    "api user/installations/"*) echo '{"message":"Forbidden"}'; echo "gh: Forbidden (HTTP 403)" >&2; return 1 ;;
+    "api repos/"*"/vulnerability-alerts") ;;
+    "api repos/"*"/private-vulnerability-reporting") echo '{"enabled":false}' ;;
+    "api repos/"*) cat "$GH_FIXTURES/repo.json" ;;
+    *) echo "fake gh: unhandled: $*" >&2; return 99 ;;
+  esac
+}
+out=$(reply "$@")
+[ -z "$out" ] && exit 0
+if [ -n "$q" ]; then printf '%s\n' "$out" | jq -r "$q"; else printf '%s\n' "$out"; fi

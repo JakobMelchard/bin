@@ -82,6 +82,12 @@ vendor_check() {
   fi
 }
 
+org_repos() { # org_repos [all] -> sorted $ORG repo names, archived ones only with `all`
+  local q='.[] | select(.isArchived|not) | .name'
+  [ "${1:-}" = all ] && q='.[].name'
+  gh repo list "$ORG" --limit 200 --json name,isArchived -q "$q" | sort
+}
+
 settings_json() { # prints .github/infra/settings.json (live from the org, or local clone)
   local d; d=$(fetch .github)
   cat "$d/infra/settings.json"

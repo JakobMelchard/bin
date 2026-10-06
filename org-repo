@@ -34,7 +34,7 @@ cmd_ls() {
 cmd_settings() {
   if [ $# -eq 0 ]; then
     set --
-    while IFS= read -r __n; do set -- "$@" "$__n"; done < <(gh repo list "$ORG" --limit 200 --json name -q '.[].name' | sort)
+    while IFS= read -r __n; do set -- "$@" "$__n"; done < <(org_repos all)
   fi
   rc=0
   for r in "$@"; do
@@ -56,7 +56,7 @@ cmd_settings() {
 cmd_sync() {
   if [ $# -eq 0 ]; then
     set --
-    while IFS= read -r __n; do set -- "$@" "$__n"; done < <(gh repo list "$ORG" --limit 200 --json name,isArchived -q '.[] | select(.isArchived|not) | .name' | sort)
+    while IFS= read -r __n; do set -- "$@" "$__n"; done < <(org_repos)
   fi
   for r in "$@"; do
     body=$(desired "$r" | jq --arg keys "$PATCH_KEYS visibility archived" 'with_entries(select(.key as $k | ($keys | split(" ")) | index($k)))')
@@ -64,12 +64,12 @@ cmd_sync() {
     gh api -X PATCH "repos/$ORG/$r" --input - <<<"$body" >/dev/null
     # dependabot alerts are a separate endpoint
     if [ "$(desired "$r" | jq -r '.vulnerability_alerts // empty')" = "true" ]; then
-      gh api -X PUT "repos/$ORG/$r/vulnerability-alerts" >/dev/null 2>&1 || true
+      gh api -X PUT "repos/$ORG/$r/vulnerability-alerts" >/dev/null || true
     fi
     # private vulnerability reporting: separate endpoint, public repos only, set when the key is present
     case "$(desired "$r" | jq -r '.private_vulnerability_reporting // empty')" in
       true)  gh api -X PUT "repos/$ORG/$r/private-vulnerability-reporting" >/dev/null 2>&1 || say "  $r: private vulnerability reporting not enabled (public repos only)" ;;
-      false) gh api -X DELETE "repos/$ORG/$r/private-vulnerability-reporting" >/dev/null 2>&1 || true ;;
+      false) gh api -X DELETE "repos/$ORG/$r/private-vulnerability-reporting" >/dev/null || true ;;
     esac
   done
 }
@@ -82,12 +82,12 @@ cmd_labels() { # the script lives next to settings.json so labels.yml in .github
 cmd_apps() {
   gh api "orgs/$ORG/installations" -q '.installations[] | "\(.id)\t\(.app_slug)\t\(.repository_selection)"' | while IFS=$'\t' read -r id slug sel; do
     if [ "$sel" = "all" ]; then say "$slug: all"; continue; fi
-    # user/installations/<id>/repositories needs a PAT or an app token; gh's OAuth token gets a
+    # user/installations/<id>/repositories needs a GitHub App user token; gh's OAuth token gets a
     # 403 whose body lands on stdout. Under pipefail that failure used to end the whole loop.
     if out=$(gh api "user/installations/$id/repositories" -q '.repositories[].name' 2>/dev/null); then
       say "$slug: $(printf '%s' "$out" | tr '\n' ' ')"
     else
-      say "$slug: selected repos (list needs a PAT)"
+      say "$slug: selected repos (list needs an app user token)"
     fi
   done
 }
