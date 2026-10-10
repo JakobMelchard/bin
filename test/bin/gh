@@ -26,6 +26,9 @@ reply() {
     "api -X "*) ;;
     "api orgs/"*"/installations") cat "$GH_FIXTURES/installations.json" ;;
     "api user/installations/"*) echo '{"message":"Forbidden"}'; echo "gh: Forbidden (HTTP 403)" >&2; return 1 ;;
+    "api repos/"*"/releases/latest")
+      r=${2#repos/*/}; r=${r%%/*}
+      printf '{"tag_name":"%s"}\n' "$(git -C "$WORKSPACES_ROOT/JakobMelchard/$r" describe --tags --abbrev=0)" ;;
     "api repos/"*"/vulnerability-alerts") ;;
     "api repos/"*"/private-vulnerability-reporting") echo '{"enabled":false}' ;;
     "api repos/"*) cat "$GH_FIXTURES/repo.json" ;;
