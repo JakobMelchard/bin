@@ -99,6 +99,16 @@ setup() { common_setup; }
   [[ "$output" == *"drift web/tokens.css"* ]] || false
 }
 
+@test "an opt-in never overwrites a file without the VENDORED header" {
+  cd "$R"
+  mkdir -p .config web && echo web/house.css > .config/tokens.path
+  echo 'body { color: red; }' > web/house.css
+  run "$BIN/config-sync" tokens
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"web/house.css has no VENDORED header; refusing to overwrite it"* ]] || false
+  [ "$(cat web/house.css)" = 'body { color: red; }' ]
+}
+
 @test "--check and --examples do not mix" {
   cd "$R"
   run "$BIN/config-sync" --check --examples

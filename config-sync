@@ -75,6 +75,10 @@ while IFS=$'\t' read -r from optfile; do
   case "$to" in
     ''|/*|../*|*/../*|..) die "$optfile: want a repo-relative destination path on its first line, got '$to'" ;;
   esac
+  # the path file only names a destination: never overwrite a hand-written file there (interviews house.css)
+  if [ "$check" = 0 ] && [ -f "$to" ] && ! sed -n 1p "$to" | grep -q 'VENDORED from'; then
+    die "$to has no VENDORED header; refusing to overwrite it via $optfile (move it away or change $optfile)"
+  fi
   one "$from" "$to"
 done < <(jq -r '(.opt_in // {}) | to_entries[] | "\(.key)\t\(.value)"' "$m")
 if [ "$examples" = 1 ]; then

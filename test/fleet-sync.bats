@@ -18,6 +18,10 @@ setup() {
   export FLEET_GIT_HOST=fake
   git config --global url."file://$T/remotes/".insteadOf git@fake:JakobMelchard/
   settings '{"repos": {"drifted": {}, "fresh": {}, "tpl": {}, "old": {"archived": true}, "bin": {}, "gone": {}}}'
+  # .config is vendored from its latest release tag; main moves on past it
+  git -C "$WS/.config" tag v1.0.0
+  printf 'root = unreleased\n' > "$WS/.config/editorconfig/editorconfig"
+  git -C "$WS/.config" commit -qam next && git -C "$WS/.config" update-ref refs/remotes/origin/main HEAD
   remote drifted .editorconfig 'root = false'
   remote fresh .editorconfig "# VENDORED from JakobMelchard/.config/editorconfig/editorconfig - do not edit here; run config-sync.
 root = true"
@@ -28,14 +32,37 @@ root = true"
 
 @test "no args: every listed repo except archived and platform ones" {
   run "$BIN/fleet-sync" --dry-run
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"fleet-sync from JakobMelchard/.config@v1.0.0"* ]] || false
   [[ "$output" == *"drifted: changed"* ]] || false
   [[ "$output" == *"    M .editorconfig"* ]] || false
   [[ "$output" == *"fresh: up to date"* ]] || false
   [[ "$output" == *"tpl: templated, skipped (copier update / Renovate)"* ]] || false
-  [[ "$output" == *"gone: clone failed, skipped"* ]] || false
+  [[ "$output" == *"gone: clone failed"* ]] || false
+  [[ "$output" == *"failed: gone"* ]] || false
   [[ "$output" != *old:* ]] || false
   [[ "$output" != *bin:* ]] || false
+}
+
+@test "a header-only difference is up to date" {
+  remote stale .editorconfig "# VENDORED from JakobMelchard/.config/editorconfig/editorconfig — older header.
+root = true" web/tokens.css "/* VENDORED from JakobMelchard/.config tokens/tokens.css @v0.9.0. Do not edit; run config-sync. */
+:root { --c: red; }" .config/tokens.path web/tokens.css
+  remote bare .editorconfig 'root = true'
+  run "$BIN/fleet-sync" --dry-run stale bare
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale: up to date"* ]] || false
+  [[ "$output" == *"bare: up to date"* ]] || false
+}
+
+@test "a failing repo fails the run after the others" {
+  remote hand .config/tokens.path web/house.css web/house.css 'body { color: red; }'
+  run "$BIN/fleet-sync" --dry-run hand drifted
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"web/house.css has no VENDORED header; refusing to overwrite it"* ]] || false
+  [[ "$output" == *"hand: failed"* ]] || false
+  [[ "$output" == *"drifted: changed"* ]] || false
+  [[ "$output" == *"failed: hand"* ]] || false
 }
 
 @test "--dry-run pushes nothing and opens no PR" {
@@ -50,6 +77,7 @@ root = true"
   [ "$status" -eq 0 ]
   [[ "$output" == *"opened PR https://github.com/JakobMelchard/x/pull/1"* ]] || false
   [ "$(git -C "$T/remotes/drifted.git" log -1 --format=%s chore/fleet-sync)" = "chore: refresh vendored org config" ]
+  [ "$(git -C "$T/remotes/drifted.git" show chore/fleet-sync:.editorconfig | tail -1)" = "root = true" ]
   grep -q '^pr create -R JakobMelchard/drifted --head chore/fleet-sync' "$GH_LOG"
   run ! grep -q JakobMelchard/fresh "$GH_LOG"
 }
